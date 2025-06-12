@@ -2,10 +2,8 @@
 #include <vector>
 #include <cmath>
 #include <string>
+#include <stdexcept>
 
-// Maximum number of AMR patches allowed in a single run
-constexpr int MAX_REFINEMENTS = 5;
-extern int refinement_count;
 
 /**
  * Lightweight 2‑D uniformly‑spaced scalar field.
@@ -21,14 +19,6 @@ public:
     void fill(double v);
 };
 
-class AMRGrid {
-public:
-    std::vector<Grid> levels;
-    int max_level;
-    AMRGrid(int base_nx, int base_ny, double Lx, double Ly, int max_level=1);
-    void refine(int level, int start_x, int start_y, int fine_nx, int fine_ny);
-    bool needs_refinement(const Grid& g, int i,int j,double threshold);
-};
 
 struct FlowField {
     Grid rho,u,v,p,e;

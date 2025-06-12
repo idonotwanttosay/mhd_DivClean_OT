@@ -6,7 +6,6 @@
 #include <chrono>
 #include <iostream>
 #include <iomanip>
-#include <vector>
 
 static std::string prepare_output_dir(){
     namespace fs = std::filesystem;
@@ -28,10 +27,8 @@ int main(){
 
     std::string out_dir = prepare_output_dir();
 
-    AMRGrid amr(nx,ny,Lx,Ly,1);
-    std::vector<FlowField> flows;
-    flows.emplace_back(nx,ny,dx,dy);
-    initialize_orszag_tang(flows[0]);
+    FlowField flow(nx,ny,dx,dy);
+    initialize_orszag_tang(flow);
     //initialize_MHD_disk(flows[0]); // deterministic seed default
     //add_divergence_error(flows[0], 0.1);
 
@@ -39,14 +36,14 @@ int main(){
     auto t0=std::chrono::high_resolution_clock::now();
     for(int step=0; step<=max_steps; ++step){
         // Use dynamic CFL-based timestep from the current flow state
-        double dt = compute_cfl_timestep(flows[0]);
+        double dt = compute_cfl_timestep(flow);
 
-        solve_MHD(amr,flows,dt,nu,0,0.0);
+        solve_MHD(flow, dt, nu);
 
         if(step%output_every==0){
             std::cout << "step "<< std::setw(4) << step
                       << " dt="<<dt<<"\n";
-            save_flow_MHD(flows[0],out_dir,step);
+            save_flow_MHD(flow,out_dir,step);
         }
     }
     auto t1=std::chrono::high_resolution_clock::now();

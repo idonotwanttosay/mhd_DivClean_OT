@@ -9,7 +9,7 @@
 static constexpr double ETA = 0.01;    // Magnetic diffusivity
 static constexpr double CH = 1.0;      // GLM wave speed
 static constexpr double CR = 0.018;     // GLM damping coefficient (improved value)
-static constexpr double gamma_gas = 1.4;
+static constexpr double gamma_gas = 5.0/3.0;
 
 // Helper function: compute Laplacian
 static inline double laplacian(const Grid& g, int i, int j) {
@@ -183,7 +183,8 @@ double compute_cfl_timestep(const FlowField& flow, double cfl_number) {
         }
     }
     
-    return cfl_number * dt_min;
+    double dt_glm = std::min(grid.dx, grid.dy) / CH;
+    return cfl_number * std::min(dt_min, dt_glm);
 }
 
 // Compute divergence errors for monitoring
@@ -211,28 +212,6 @@ std::pair<double, double> compute_divergence_errors(const FlowField& flow) {
 }
 
 // Main improved MHD solver function
-static FlowField refine_flow(const FlowField& coarse,int start_x,int start_y,int fine_nx,int fine_ny){
-    double fine_dx = coarse.rho.dx/2.0;
-    double fine_dy = coarse.rho.dy/2.0;
-    double x0 = coarse.rho.x0 + start_x*coarse.rho.dx;
-    double y0 = coarse.rho.y0 + start_y*coarse.rho.dy;
-    FlowField fine(fine_nx,fine_ny,fine_dx,fine_dy,x0,y0);
-    #pragma omp parallel for collapse(2)
-    for(int i=0;i<fine_nx;++i)
-        for(int j=0;j<fine_ny;++j){
-            int ci = std::min(start_x+i/2, coarse.rho.nx-1);
-            int cj = std::min(start_y+j/2, coarse.rho.ny-1);
-            fine.rho.data[i][j] = coarse.rho.data[ci][cj];
-            fine.u.data[i][j]   = coarse.u.data[ci][cj];
-            fine.v.data[i][j]   = coarse.v.data[ci][cj];
-            fine.p.data[i][j]   = coarse.p.data[ci][cj];
-            fine.e.data[i][j]   = coarse.e.data[ci][cj];
-            fine.bx.data[i][j]  = coarse.bx.data[ci][cj];
-            fine.by.data[i][j]  = coarse.by.data[ci][cj];
-            fine.psi.data[i][j] = coarse.psi.data[ci][cj];
-        }
-    return fine;
-}
 
 static void update_level(FlowField& flow,double dt,double nu){
     Grid& grid = flow.rho;
@@ -443,16 +422,11 @@ static void update_level(FlowField& flow,double dt,double nu){
                 by_new[i][j] += dt * ETA * laplacian(flow.by, i, j);
             }
             
-            // GLM source term: exponential decay
-            double divB_new = 0.0;
-            if( i>0 && i<grid.nx-1 && j > 0 && j < grid.ny-1){
-            divB_new = (bx_new[i+1][j] - bx_new[i-1][j]) / (2*grid.dx)
-                + (by_new[i][j+1] - by_new[i][j-1]) / (2*grid.dy);
-            }
-            psi_new[i][j] -= dt * CH * CH * divB_new;
+            // GLM flux part handled above; divergence cleaning will be applied later
             
-            // Ensure positive density
+            // Ensure physical values
             rho_new[i][j] = std::max(rho_new[i][j], 1e-10);
+            e_new[i][j]   = std::max(e_new[i][j], 1e-10);
         }
     }
     
@@ -465,8 +439,7 @@ static void update_level(FlowField& flow,double dt,double nu){
             flow.v.data[i][j] = momy_new[i][j] / rho_new[i][j];
             flow.bx.data[i][j] = bx_new[i][j];
             flow.by.data[i][j] = by_new[i][j];
-            flow.psi.data[i][j] = psi_new[i][j];
-            flow.e.data[i][j] = e_new[i][j];
+            flow.e.data[i][j]  = e_new[i][j];
             
             // Update pressure
             double ke = 0.5 * rho_new[i][j] * (flow.u.data[i][j]*flow.u.data[i][j] + 
@@ -495,8 +468,7 @@ static void update_level(FlowField& flow,double dt,double nu){
         flow.bx.data[grid.nx-1][j] = flow.bx.data[1][j];
         flow.by.data[0][j] = flow.by.data[grid.nx-2][j];
         flow.by.data[grid.nx-1][j] = flow.by.data[1][j];
-        flow.psi.data[0][j] = flow.psi.data[grid.nx-2][j];
-        flow.psi.data[grid.nx-1][j] = flow.psi.data[1][j];
+        // psi handled separately
     }
     
     #pragma omp parallel for
@@ -516,34 +488,22 @@ static void update_level(FlowField& flow,double dt,double nu){
         flow.bx.data[i][grid.ny-1] = flow.bx.data[i][1];
         flow.by.data[i][0] = flow.by.data[i][grid.ny-2];
         flow.by.data[i][grid.ny-1] = flow.by.data[i][1];
-        flow.psi.data[i][0] = flow.psi.data[i][grid.ny-2];
-        flow.psi.data[i][grid.ny-1] = flow.psi.data[i][1];
+        // psi handled separately
+    }
+
+    // GLM divergence cleaning including boundaries
+    #pragma omp parallel for collapse(2)
+    for(int i=0;i<grid.nx;++i){
+        for(int j=0;j<grid.ny;++j){
+            int ip=(i+1)%grid.nx, im=(i-1+grid.nx)%grid.nx;
+            int jp=(j+1)%grid.ny, jm=(j-1+grid.ny)%grid.ny;
+            double divB_new = (bx_new[ip][j] - bx_new[im][j])/(2*grid.dx)
+                            + (by_new[i][jp] - by_new[i][jm])/(2*grid.dy);
+            flow.psi.data[i][j] = psi_new[i][j] - dt*CH*CH*divB_new;
+        }
     }
 }
 
-void solve_MHD(AMRGrid& amr, std::vector<FlowField>& flows, double dt, double nu, int, double){
-    // allow a single refinement on the base grid if needed
-    if(amr.levels.size() == flows.size()){
-        Grid& g = flows[0].rho;
-        for(int i = 1; i < g.nx-1; ++i){
-            for(int j = 1; j < g.ny-1; ++j){
-                if(amr.needs_refinement(g, i, j, 0.5)){
-                    int fnx = g.nx/2;
-                    int fny = g.ny/2;
-                    int sx  = std::max(0, i - fnx/4);
-                    int sy  = std::max(0, j - fny/4);
-                    amr.refine(0, sx, sy, fnx, fny);
-                    flows.push_back(refine_flow(flows[0], sx, sy, fnx, fny));
-                    i = g.nx; // exit loops
-                    break;
-                }
-            }
-        }
-    }
-
-
-    // update every level separately (no prolongation/restriction for simplicity)
-    for(auto& f : flows){
-        update_level(f, dt, nu);
-    }
+void solve_MHD(FlowField& flow, double dt, double nu){
+    update_level(flow, dt, nu);
 }
