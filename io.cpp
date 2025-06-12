@@ -21,4 +21,5 @@ void save_flow_MHD(const FlowField& flow,const std::string& dir,int step){
     dump_scalar(flow.e,   prefix+"e_"+std::to_string(step)+".csv");
     dump_scalar(flow.bx,  prefix+"bx_"+std::to_string(step)+".csv");
     dump_scalar(flow.by,  prefix+"by_"+std::to_string(step)+".csv");
+    dump_scalar(flow.psi, prefix+"psi_"+std::to_string(step)+".csv");
 }
