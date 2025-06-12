@@ -246,6 +246,14 @@ static void update_level(FlowField& flow,double dt,double nu){
     auto sby_y  = std::vector<std::vector<double>>(grid.nx, std::vector<double>(grid.ny));
     auto spsi_y = std::vector<std::vector<double>>(grid.nx, std::vector<double>(grid.ny));
 
+    auto zero_slopes = [](auto& arr){
+        for(auto& r : arr) std::fill(r.begin(), r.end(), 0.0);
+    };
+    zero_slopes(srho_x);  zero_slopes(su_x);  zero_slopes(sv_x);
+    zero_slopes(sp_x);    zero_slopes(sbx_x); zero_slopes(sby_x); zero_slopes(spsi_x);
+    zero_slopes(srho_y);  zero_slopes(su_y);  zero_slopes(sv_y);
+    zero_slopes(sp_y);    zero_slopes(sbx_y); zero_slopes(sby_y); zero_slopes(spsi_y);
+
     // Slopes in X direction
     #pragma omp parallel for collapse(2)
     for(int i=1;i<grid.nx-1;++i){
@@ -442,52 +450,58 @@ static void update_level(FlowField& flow,double dt,double nu){
             flow.e.data[i][j]  = e_new[i][j];
             
             // Update pressure
-            double ke = 0.5 * rho_new[i][j] * (flow.u.data[i][j]*flow.u.data[i][j] + 
+            double ke = 0.5 * rho_new[i][j] * (flow.u.data[i][j]*flow.u.data[i][j] +
                                                 flow.v.data[i][j]*flow.v.data[i][j]);
             double me = 0.5 * (bx_new[i][j]*bx_new[i][j] + by_new[i][j]*by_new[i][j]);
-            flow.p.data[i][j] = (gamma_gas - 1.0) * (e_new[i][j] - ke - me);
-            flow.p.data[i][j] = std::max(flow.p.data[i][j], 1e-10);
+            double ie = e_new[i][j] - ke - me;
+            if (ie < 0)
+                std::cerr << "Warning: Negative internal energy at ("<<i<<","<<j<<")\n";
+            flow.p.data[i][j] = (gamma_gas - 1.0) * std::max(ie, 1e-10);
         }
     }
     
     // Boundary conditions (periodic)
     #pragma omp parallel for
     for (int j = 0; j < grid.ny; ++j) {
-        // X direction periodic BC
-        flow.rho.data[0][j] = flow.rho.data[grid.nx-2][j];
-        flow.rho.data[grid.nx-1][j] = flow.rho.data[1][j];
-        flow.u.data[0][j] = flow.u.data[grid.nx-2][j];
-        flow.u.data[grid.nx-1][j] = flow.u.data[1][j];
-        flow.v.data[0][j] = flow.v.data[grid.nx-2][j];
-        flow.v.data[grid.nx-1][j] = flow.v.data[1][j];
-        flow.p.data[0][j] = flow.p.data[grid.nx-2][j];
-        flow.p.data[grid.nx-1][j] = flow.p.data[1][j];
-        flow.e.data[0][j] = flow.e.data[grid.nx-2][j];
-        flow.e.data[grid.nx-1][j] = flow.e.data[1][j];
-        flow.bx.data[0][j] = flow.bx.data[grid.nx-2][j];
-        flow.bx.data[grid.nx-1][j] = flow.bx.data[1][j];
-        flow.by.data[0][j] = flow.by.data[grid.nx-2][j];
-        flow.by.data[grid.nx-1][j] = flow.by.data[1][j];
+        // X direction periodic BC using modulo indices
+        int left_src  = (grid.nx + 0 - 2) % grid.nx;  // nx-2
+        int right_src = (grid.nx - 1 + 2) % grid.nx;  // 1
+        flow.rho.data[0][j] = flow.rho.data[left_src][j];
+        flow.rho.data[grid.nx-1][j] = flow.rho.data[right_src][j];
+        flow.u.data[0][j] = flow.u.data[left_src][j];
+        flow.u.data[grid.nx-1][j] = flow.u.data[right_src][j];
+        flow.v.data[0][j] = flow.v.data[left_src][j];
+        flow.v.data[grid.nx-1][j] = flow.v.data[right_src][j];
+        flow.p.data[0][j] = flow.p.data[left_src][j];
+        flow.p.data[grid.nx-1][j] = flow.p.data[right_src][j];
+        flow.e.data[0][j] = flow.e.data[left_src][j];
+        flow.e.data[grid.nx-1][j] = flow.e.data[right_src][j];
+        flow.bx.data[0][j] = flow.bx.data[left_src][j];
+        flow.bx.data[grid.nx-1][j] = flow.bx.data[right_src][j];
+        flow.by.data[0][j] = flow.by.data[left_src][j];
+        flow.by.data[grid.nx-1][j] = flow.by.data[right_src][j];
         // psi handled separately
     }
     
     #pragma omp parallel for
     for (int i = 0; i < grid.nx; ++i) {
-        // Y direction periodic BC
-        flow.rho.data[i][0] = flow.rho.data[i][grid.ny-2];
-        flow.rho.data[i][grid.ny-1] = flow.rho.data[i][1];
-        flow.u.data[i][0] = flow.u.data[i][grid.ny-2];
-        flow.u.data[i][grid.ny-1] = flow.u.data[i][1];
-        flow.v.data[i][0] = flow.v.data[i][grid.ny-2];
-        flow.v.data[i][grid.ny-1] = flow.v.data[i][1];
-        flow.p.data[i][0] = flow.p.data[i][grid.ny-2];
-        flow.p.data[i][grid.ny-1] = flow.p.data[i][1];
-        flow.e.data[i][0] = flow.e.data[i][grid.ny-2];
-        flow.e.data[i][grid.ny-1] = flow.e.data[i][1];
-        flow.bx.data[i][0] = flow.bx.data[i][grid.ny-2];
-        flow.bx.data[i][grid.ny-1] = flow.bx.data[i][1];
-        flow.by.data[i][0] = flow.by.data[i][grid.ny-2];
-        flow.by.data[i][grid.ny-1] = flow.by.data[i][1];
+        // Y direction periodic BC using modulo indices
+        int bot_src = (grid.ny + 0 - 2) % grid.ny;  // ny-2
+        int top_src = (grid.ny - 1 + 2) % grid.ny;  // 1
+        flow.rho.data[i][0] = flow.rho.data[i][bot_src];
+        flow.rho.data[i][grid.ny-1] = flow.rho.data[i][top_src];
+        flow.u.data[i][0] = flow.u.data[i][bot_src];
+        flow.u.data[i][grid.ny-1] = flow.u.data[i][top_src];
+        flow.v.data[i][0] = flow.v.data[i][bot_src];
+        flow.v.data[i][grid.ny-1] = flow.v.data[i][top_src];
+        flow.p.data[i][0] = flow.p.data[i][bot_src];
+        flow.p.data[i][grid.ny-1] = flow.p.data[i][top_src];
+        flow.e.data[i][0] = flow.e.data[i][bot_src];
+        flow.e.data[i][grid.ny-1] = flow.e.data[i][top_src];
+        flow.bx.data[i][0] = flow.bx.data[i][bot_src];
+        flow.bx.data[i][grid.ny-1] = flow.bx.data[i][top_src];
+        flow.by.data[i][0] = flow.by.data[i][bot_src];
+        flow.by.data[i][grid.ny-1] = flow.by.data[i][top_src];
         // psi handled separately
     }
 
@@ -499,7 +513,8 @@ static void update_level(FlowField& flow,double dt,double nu){
             int jp=(j+1)%grid.ny, jm=(j-1+grid.ny)%grid.ny;
             double divB_new = (bx_new[ip][j] - bx_new[im][j])/(2*grid.dx)
                             + (by_new[i][jp] - by_new[i][jm])/(2*grid.dy);
-            flow.psi.data[i][j] = psi_new[i][j] - dt*CH*CH*divB_new;
+            flow.psi.data[i][j] = psi_new[i][j] - dt*CH*CH*divB_new
+                                   - dt*CR*psi_new[i][j];
         }
     }
 }
