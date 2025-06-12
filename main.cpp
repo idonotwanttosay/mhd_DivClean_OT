@@ -24,6 +24,7 @@ int main(){
     const double nu=0.01;
     const int max_steps=2000;
     const int output_every=20;
+    const double t_end = 20.0;
 
     std::string out_dir = prepare_output_dir();
 
@@ -34,15 +35,20 @@ int main(){
 
 
     auto t0=std::chrono::high_resolution_clock::now();
-    for(int step=0; step<=max_steps; ++step){
+    double t = 0.0;
+    for(int step=0; step<=max_steps && t < t_end; ++step){
         // Use dynamic CFL-based timestep from the current flow state
         double dt = compute_cfl_timestep(flow);
+        if(t + dt > t_end) dt = t_end - t;
 
         solve_MHD(flow, dt, nu);
+        t += dt;
 
         if(step%output_every==0){
-            std::cout << "step "<< std::setw(4) << step
-                      << " dt="<<dt<<"\n";
+            auto [max_divB, L1_divB] = compute_divergence_errors(flow);
+            std::cout << "step "<< std::setw(4) << step << " dt="<<dt
+                      << " max_divB=" << max_divB
+                      << " L1_divB=" << L1_divB << "\n";
             save_flow_MHD(flow,out_dir,step);
         }
     }
