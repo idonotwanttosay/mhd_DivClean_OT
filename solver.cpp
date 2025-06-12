@@ -6,9 +6,9 @@
 #include <iostream>
 #include <algorithm>
 
-static constexpr double ETA = 0.01;    // Magnetic diffusivity
-static constexpr double CH = 1.0;      // GLM wave speed
-static constexpr double CR = 0.018;     // GLM damping coefficient (improved value)
+static constexpr double ETA = 0.001;    // Magnetic diffusivity
+static constexpr double CH = 0.8;      // GLM wave speed
+static constexpr double CR = 0.01;     // GLM damping coefficient (improved value)
 static constexpr double gamma_gas = 5.0/3.0;
 
 // Helper function: compute Laplacian
@@ -184,6 +184,8 @@ double compute_cfl_timestep(const FlowField& flow, double cfl_number) {
     }
     
     double dt_glm = std::min(grid.dx, grid.dy) / CH;
+    if(dt_min > 1.0) // prevent unrealistically large dt due to NaNs
+        dt_min = std::min(grid.dx, grid.dy) / CH;
     return cfl_number * std::min(dt_min, dt_glm);
 }
 
@@ -408,6 +410,12 @@ static void update_level(FlowField& flow,double dt,double nu){
             
             e_new[i][j] = flow.e.data[i][j] - dt/grid.dx * (flux_xp.F_E - flux_xm.F_E)
                                             - dt/grid.dy * (flux_yp.F_E - flux_ym.F_E);
+            double ke_temp = 0.5 * rho_new[i][j] * (u*u + v*v);
+            double me_temp = 0.5 * (bx_new[i][j]*bx_new[i][j] + by_new[i][j]*by_new[i][j]);
+            if (e_new[i][j] < ke_temp + me_temp + 1e-10) {
+                std::cerr << "Warning: Insufficient total energy at ("<<i<<","<<j<<"), adjusting\n";
+                e_new[i][j] = ke_temp + me_temp + 1e-10;
+            }
             
             bx_new[i][j] = Bx - dt/grid.dx * (flux_xp.F_Bx - flux_xm.F_Bx)
                               - dt/grid.dy * (flux_yp.F_Bx - flux_ym.F_Bx);
@@ -480,7 +488,8 @@ static void update_level(FlowField& flow,double dt,double nu){
         flow.bx.data[grid.nx-1][j] = flow.bx.data[right_src][j];
         flow.by.data[0][j] = flow.by.data[left_src][j];
         flow.by.data[grid.nx-1][j] = flow.by.data[right_src][j];
-        // psi handled separately
+        flow.psi.data[0][j] = flow.psi.data[left_src][j];
+        flow.psi.data[grid.nx-1][j] = flow.psi.data[right_src][j];
     }
     
     #pragma omp parallel for
@@ -502,7 +511,8 @@ static void update_level(FlowField& flow,double dt,double nu){
         flow.bx.data[i][grid.ny-1] = flow.bx.data[i][top_src];
         flow.by.data[i][0] = flow.by.data[i][bot_src];
         flow.by.data[i][grid.ny-1] = flow.by.data[i][top_src];
-        // psi handled separately
+        flow.psi.data[i][0] = flow.psi.data[i][bot_src];
+        flow.psi.data[i][grid.ny-1] = flow.psi.data[i][top_src];
     }
 
     // GLM divergence cleaning including boundaries
