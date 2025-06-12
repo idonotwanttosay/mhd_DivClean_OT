@@ -1,7 +1,9 @@
-"""Compute L2 norm of magnetic field divergence over time.
+"""Analyse magnetic field divergence from simulation output.
 
-Expects out_bx_<step>.csv & out_by_<step>.csv inside Result/.
-Outputs PNG.
+This script reads ``out_bx_*.csv`` and ``out_by_*.csv`` files located
+in ``Result/`` and computes both the L2 norm and the maximum absolute
+value of ``∇·B`` for each available time step.  Two subplots showing the
+evolution of these quantities are saved to ``Result/divB_error.png``.
 """
 
 import numpy as np, pandas as pd, matplotlib.pyplot as plt, re, os, glob
@@ -24,16 +26,29 @@ def grid_shape():
 nx, ny, xs, ys = grid_shape()
 dx = xs[1]-xs[0]; dy = ys[1]-ys[0]
 
-l2=[]
+l2 = []
+max_abs = []
 for s in steps:
-    bx = load(s,"bx").reshape(nx,ny).T
-    by = load(s,"by").reshape(nx,ny).T
-    div = (np.roll(bx,-1,1)-np.roll(bx,1,1))/(2*dx) + (np.roll(by,-1,0)-np.roll(by,1,0))/(2*dy)
-    l2.append(np.sqrt(np.mean(div**2)))
+    bx = load(s, "bx").reshape(nx, ny).T
+    by = load(s, "by").reshape(nx, ny).T
+    div = (
+        (np.roll(bx, -1, 1) - np.roll(bx, 1, 1)) / (2 * dx)
+        + (np.roll(by, -1, 0) - np.roll(by, 1, 0)) / (2 * dy)
+    )
+    l2.append(np.sqrt(np.mean(div ** 2)))
+    max_abs.append(np.max(np.abs(div)))
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+ax1.semilogy(steps, l2, 'o-')
+ax1.set_xlabel('step')
+ax1.set_ylabel('L2(∇·B)')
+ax1.set_title('L2 Divergence')
 
-plt.semilogy(steps,l2,'o-')
-plt.xlabel("step"); plt.ylabel("L2(∇·B)")
-plt.title("Magnetic Divergence Error")
-plt.tight_layout()
-plt.savefig("Result/divB_error.png",dpi=200)
-print("Saved Result/divB_error.png")
+ax2.semilogy(steps, max_abs, 'o-r')
+ax2.set_xlabel('step')
+ax2.set_ylabel('max |∇·B|')
+ax2.set_title('Max Divergence')
+
+fig.tight_layout()
+fig.savefig('Result/divB_error.png', dpi=200)
+print(f"Saved Result/divB_error.png. Final L2={l2[-1]:.3e}, max={max_abs[-1]:.3e}")
+
